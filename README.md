@@ -2,7 +2,7 @@
 
 Een deterministisch, low-latency **Push-to-Talk (PTT) intercomsysteem** voor Linux (`x86_64` & `aarch64` / Raspberry Pi / NVIDIA Jetson) over **UDP unicast & WireGuard**, geïnspireerd op het wandpaneel van de *USS Enterprise* (`'UHUR'` wire-protocol).
 
-Ontwikkeld volgens strikte **NASA Power of 10** en **Zenoh-pico** engineering-principes (zie [AGENTS.md](./AGENTS.md) en [docs/DESIGN.md](./docs/DESIGN.md)):
+Ontwikkeld volgens strikte **NASA Power of 10** en **Zenoh-pico** engineering-principes (zie [AGENTS.md](./AGENTS.md), [docs/DESIGN.md](./docs/DESIGN.md) en [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md)):
 - **0 dynamische geheugenallocaties (`malloc`/`free`)** — inclusief `libopus` op statisch uitgelijnde buffers.
 - **Expliciete Ownership & Borrowing (`_Owned` / `_Loaned`)** met move-invalidatie.
 - **Strong Types & Parameter Object Pattern** — geen naked primitieve types op modulegrenzen.
@@ -77,7 +77,9 @@ Elke post heeft een uniek `--id` (`1..16`), een leesbare `--name`, en één of m
 ```text
 .
 ├── AGENTS.md               # Strikte programmeerregels & Design-First werkwijze
-├── docs/DESIGN.md          # Goedgekeurd systeem-, 'UHUR'-protocol- & type-ontwerp
+├── docs/
+│   ├── DESIGN.md           # Goedgekeurd systeem-, 'UHUR'-protocol- & type-ontwerp
+│   └── REQUIREMENTS_AND_ROADMAP.md # Kringen-discovery, Eduroam-fallback & ESP32 I2S roadmap
 ├── pixi.toml               # Multi-arch dependencies (linux-64 & linux-aarch64)
 ├── CMakeLists.txt          # Strikte C23 build & CTest configuratie
 ├── include/
