@@ -1,37 +1,77 @@
-# UHURA — Low-Latency Opus PTT Intercom (Embedded-Grade C23)
+# UHURA — Robuuste Low-Latency Intercom (Embedded C23 voor ESP32 & Linux)
 
-Een deterministisch, low-latency **Push-to-Talk (PTT) intercomsysteem** voor Linux (`x86_64` & `aarch64` / Raspberry Pi / NVIDIA Jetson) over **UDP unicast & WireGuard**, geïnspireerd op het wandpaneel van de *USS Enterprise* (`'UHUR'` wire-protocol).
-
-Ontwikkeld volgens strikte **NASA Power of 10** en **Zenoh-pico** engineering-principes (zie [AGENTS.md](./AGENTS.md), [docs/DESIGN.md](./docs/DESIGN.md) en [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md)):
-- **0 dynamische geheugenallocaties (`malloc`/`free`)** — inclusief `libopus` op statisch uitgelijnde buffers.
-- **Expliciete Ownership & Borrowing (`_Owned` / `_Loaned`)** met move-invalidatie.
-- **Strong Types & Parameter Object Pattern** — geen naked primitieve types op modulegrenzen.
-- **0 globale variabelen** — zelfs Linux signaal- en timerafhandeling loopt via `signalfd` + `timerfd` + `poll()`.
-- **100% platform-vrije kern (`src/core/`)** — losgekoppeld van sockets en ALSA, klaar voor Fase 2 (Echo Cancellation).
+**UHURA** (vernoemd naar communicatie-officier *Lt. Uhura* van de *USS Enterprise*, met pakket-header `'UHUR'`) is een lichtgewicht, betrouwbaar en razendsnel opstartend **Push-to-Talk intercomsysteem** voor zowel **ESP32-hardware** (met I2S-audio, fysieke knoppen en LEDs) als **Linux** (`x86_64`, Raspberry Pi, NVIDIA Jetson).
 
 ---
 
-## Bouwen & Testen (Pixi + CMake)
+## Waarom dit project bestaat: Eenvoud & Bruikbaarheid voor Échte Mensen
 
-Dit project gebruikt [Pixi](https://pixi.sh) om dezelfde reproduceerbare toolchain (`cmake`, `ninja`, `c-compiler`, `libopus`, `alsa-lib`) op zowel `linux-64` (`x86_64`) als `linux-aarch64` (Raspberry Pi / Jetson) te leveren:
+Moderne smartphones, apps en pc's doen er minuten over om op te starten, zitten vol menu's, wachtwoorden en updates, en zijn voor bijvoorbeeld ouderen of slechthorenden vaak onnodig ingewikkeld of te zacht.
+
+UHURA lost een concreet menselijk probleem op: **direct, helder en zorgeloos stemcontact tussen kamers of huishoudens** (zoals met een ouder op leeftijd, tussen huis en werkplaats, of tussen lab en kantoor):
+
+- **Direct aan in ~2 seconden (niet in minuten):** Stekker erin en vrijwel direct klaar om te praten vanuit het eigen geheugen — geen besturingssysteem dat eerst een minuut moet booten.
+- **1 Knop = 1 Persoon, 1 Lampje = 1 Betekenis:** Grote, duidelijke fysieke knoppen en losse LEDs (via een `MCP23017` I2C GPIO-expander). Geen touchscreens of verwarrende knippercodes:
+  - **Groen lampje bij een naam:** diegene is online en bereikbaar.
+  - **Geel/wit lampje bij een naam:** diegene praat *nú* tegen jou (zodat je direct ziet wie er spreekt).
+  - **Rood lampje ("MIC AAN"):** jouw microfoon staat open — 100% transparante privacy in één oogopslag.
+  - **Knop van een persoon indrukken = direct spreken; loslaten = klaar.**
+- **Luid, helder en afgestemd op minder goed gehoor:** Ontworpen voor krachtige I2S-versterkers, met vaste-komma spraakfiltering en automatische volumeregeling (AGC/limiter) zodat zowel zachte als luide stemmen altijd duidelijk en onvervormd klinken.
+- **Slimme "Kringen" & Overal Verbinding (van Huiskamer tot Eduroam):**
+  - Elke intercom kan lid zijn van één of meerdere **Kringen** (via een simpele koppelcode). Zo kan *Jij* praten met *Ma* en *Zus*, en kan *Zus* daarnaast praten met haar *Schoonmoeder*, zonder dat *Schoonmoeder* bij jou op een knop verschijnt.
+  - Werkt thuis stekker-erin zonder VPN (via een eenmalig Wi-Fi Captive Portal en automatische UDP Hole Punching), blijft werken zonder centrale server op bekende IP's/LAN, én heeft een versleutelde poort-443 fallback voor strenge bedrijfs- en universiteitsnetwerken zoals **Eduroam**.
+
+---
+
+## Educatieve Context (Fontys ICT): Van "Code Schrijven" naar Écht Software Engineering
+
+Dit project is daarnaast opgezet vanuit **Fontys ICT** als praktijkcasus en leerproject voor het effectief bouwen van serieuze systemen met moderne **Agentic AI-tools** (zoals *Google Gemini* en *Claude Opus*).
+
+Het vak van de ICT'er verschuift fundamenteel: **het intypen van regels code is niet langer het knelpunt — vakmanschap in Software Engineering is belangrijker dan ooit.** Een AI-agent kan razendsnel code genereren, maar zonder sterke engineering-sturing ontstaat kwetsbare spaghetti. Dit repository laat stap voor stap zien welke menselijke vaardigheden het verschil maken:
+
+1. **Mens- en domeingerichte analyse:** Altijd vertrekken vanuit de eindgebruiker (wat heeft iemand die slecht hoort of geen techneut is écht nodig?) en vanuit de fysieke werkelijkheid van hardware en netwerken.
+2. **De juiste vragen stellen & besluiten onderbouwen:** Randgevallen vóór de bouw blootleggen — zoals *Symmetric NAT* op Eduroam, of waarom I2S-DMA niet in ESP32 PSRAM mag staan tijdens flash-schrijfacties — en keuzes vastleggen in [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md).
+3. **Harde kwaliteitskaders opleggen ([AGENTS.md](./AGENTS.md)):** Eerst een goedgekeurd ontwerp ([docs/DESIGN.md](./docs/DESIGN.md)), pas daarna implementatie onder strikte embedded-regels (*NASA Power of 10* & *Zenoh-pico* eigenaarschap).
+4. **Deterministisch testen voor veiligheid en betrouwbaarheid:** Door alle kernlogica 100% los te koppelen van besturingssysteem en hardware, wordt elk pakket, elk geheugenpad en elk verlies-scenario in milliseconden geautomatiseerd getest voordat het op echte hardware draait.
+
+> Gebruik deze repo gerust als studiemateriaal: lees eerst [AGENTS.md](./AGENTS.md), bekijk daarna het ontwerp in [docs/DESIGN.md](./docs/DESIGN.md) en de architectuurbesluiten in [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md), en zie hoe dat vertaald is naar de broncode in `include/`, `src/` en `tests/`.
+
+---
+
+## Technische Kenmerken & Doelplatformen
+
+Één gedeelde, platform-vrije C23-kern (`src/core/`) bedient twee werelden en compileert vanaf nul in **~2 seconden**:
+
+| Eigenschap | Invulling |
+|---|---|
+| **Doelhardware** | **ESP32 / ESP32-S3** (8 MB PSRAM, I2S microfoons + Audio DAC, `MCP23017` I2C knoppen/LEDs) én **Linux** (`x86_64` PC/server, `aarch64` Raspberry Pi & NVIDIA Jetson) |
+| **Audioprofiel** | **Opus** (`48 kHz` mono, `10 ms` frames = `480` samples/pakket), inclusief in-band **FEC** en **Packet Loss Concealment (PLC)** |
+| **Geheugenmodel** | **0 dynamische allocaties (`malloc`/`free`)** — zelfs `libopus` draait op statisch uitgelijnde buffers (~290 KB totaal) |
+| **Codeerstandaard** | Strikte **C23** (`-Wall -Wextra -Werror -Wpedantic -Wconversion -Wvla`), expliciet `_Owned` / `_Loaned` eigenaarschap, Strong Types, Parameter Object Pattern en **0 globale variabelen** |
+
+---
+
+## Snel Bouwen & Testen op Linux (Pixi + CMake)
+
+Dit project gebruikt [Pixi](https://pixi.sh) zodat de volledige C23-toolchain (`cmake`, `ninja`, `c-compiler`, `libopus`, `alsa-lib`) op zowel `linux-64` (`x86_64`) als `linux-aarch64` (Raspberry Pi / Jetson) met één commando identiek werkt:
 
 ```bash
-# Configureer, compileer (met -std=c23 -Wall -Wextra -Werror -Wconversion) en draai alle unit-tests:
+# Configureer, compileer (onder strikte -Werror vlaggen) en draai alle 5 unit-testsuites:
 pixi run test
 
-# Alleen bouwen:
+# Alleen de release/debug-met-symbolen binary bouwen:
 pixi run build
 ```
 
-De resulterende binary staat in `./build/uhura`.
+De gecompileerde Linux-intercom staat daarna in `./build/uhura`.
 
 ---
 
-## Gebruik (LAN & WireGuard)
+## Gebruik van het Linux Prototype (LAN & WireGuard)
 
-Elke post heeft een uniek `--id` (`1..16`), een leesbare `--name`, en één of meer `--peer <ID:Naam:IP:Poort>` regels met de WireGuard- of LAN-IP's van de andere posten.
+Elke post krijgt een `--id` (`1..16`), een leesbare `--name`, en één of meer `--peer <ID:Naam:IP:Poort>` opties.
 
-### Voorbeeld met 3 posten over WireGuard (`10.8.0.x`)
+### Voorbeeld met 3 posten
 
 **Post 1 — Brug (`10.8.0.1`):**
 ```bash
@@ -48,7 +88,7 @@ Elke post heeft een uniek `--id` (`1..16`), een leesbare `--name`, en één of m
   --peer 3:Kantine:10.8.0.3:4711
 ```
 
-**Post 3 — Kantine (`10.8.0.3`, bijv. Jetson):**
+**Post 3 — Kantine (`10.8.0.3`, bijv. Jetson of tweede PC):**
 ```bash
 ./build/uhura --id 3 --name Kantine --port 4711 \
   --peer 1:Brug:10.8.0.1:4711 \
@@ -56,16 +96,16 @@ Elke post heeft een uniek `--id` (`1..16`), een leesbare `--name`, en één of m
 ```
 
 > **Tip voor Ubuntu 24.04 Desktop met PipeWire:**  
-> Omdat Pixi een eigen geïsoleerde `alsa-lib` meelevert, kun je op een desktop met PipeWire óf direct een hardware-device opgeven (`--capture-dev plughw:0,0`), óf het systeem-pluginpad meegeven zodat het `"default"` PipeWire-device werkt:  
+> Omdat Pixi een geïsoleerde `alsa-lib` gebruikt, kun je op een desktop met PipeWire óf een direct hardware-device kiezen (`--capture-dev plughw:0,0`), óf Ubuntu's PipeWire-pluginpad meegeven:  
 > `ALSA_PLUGIN_DIR=/usr/lib/$(uname -m)-linux-gnu/alsa-lib ./build/uhura ...`  
-> Zonder geluidskaart testen kan altijd met `--no-audio` (stuurt een 440 Hz testtoon tijdens PTT).
+> Testen zonder geluidskaart of microfoon kan altijd met `--no-audio` (zendt een 440 Hz testtoon tijdens PTT).
 
 ### Interactieve Toetsen in de Terminal
 | Toets | Actie |
 |---|---|
 | `Spatie` of `t` | **PTT Aan / Uit** (open kanaal om te spreken / sluit kanaal) |
 | `Enter` | Direct PTT loslaten (veiligheidsstop) |
-| `1` .. `9` | Zet post `1..9` aan/uit in de doel-selectie (meerdere tegelijk mogelijk!) |
+| `1` .. `9` | Zet post `1..9` aan/uit in de doel-selectie (meerdere tegelijk mogelijk) |
 | `a` | **All-Call** (selecteer alle geconfigureerde posten tegelijk) |
 | `c` | Wis doel-selectie |
 | `q` | Netjes afsluiten |
@@ -76,25 +116,30 @@ Elke post heeft een uniek `--id` (`1..16`), een leesbare `--name`, en één of m
 
 ```text
 .
-├── AGENTS.md               # Strikte programmeerregels & Design-First werkwijze
+├── AGENTS.md                        # Strikte embedded C-regels & Design-First werkwijze
 ├── docs/
-│   ├── DESIGN.md           # Goedgekeurd systeem-, 'UHUR'-protocol- & type-ontwerp
-│   └── REQUIREMENTS_AND_ROADMAP.md # Kringen-discovery, Eduroam-fallback & ESP32 I2S roadmap
-├── pixi.toml               # Multi-arch dependencies (linux-64 & linux-aarch64)
-├── CMakeLists.txt          # Strikte C23 build & CTest configuratie
+│   ├── DESIGN.md                    # Systeem-, 'UHUR'-protocol- & type-ontwerp (Fase 1)
+│   └── REQUIREMENTS_AND_ROADMAP.md  # Architectuurbesluiten, Kringen, Eduroam & ESP32-plan
+├── pixi.toml                        # Multi-arch dependencies (linux-64 & linux-aarch64)
+├── CMakeLists.txt                   # Strikte C23 build & CTest configuratie
 ├── include/
-│   ├── core/               # 100% OS-vrije headers, Strong Types, _Owned & _Loaned
-│   └── platform/           # Smalle Linux HAL-interface
+│   ├── core/                        # 100% OS-vrije headers, Strong Types, _Owned & _Loaned
+│   └── platform/                    # Smalle platform HAL-interface
 ├── src/
-│   ├── core/               # Pure protocol-, Opus-, jitterbuffer-, PTT- & mixer-logica
-│   └── platform/linux/     # UDP unicast, ALSA real-time thread & terminal-UI
-└── tests/                  # Deterministische unit-tests (incl. 3-posten simulatie)
+│   ├── core/                        # Pure protocol-, Opus-, jitterbuffer-, PTT- & mixer-logica
+│   └── platform/linux/              # Linux UDP unicast, ALSA real-time thread & terminal-UI
+└── tests/                           # Deterministische unit-tests (incl. 3-posten simulatie)
 ```
 
-## Status
+---
 
-- [x] Werkwijze en codeerstandaard vastgelegd ([AGENTS.md](./AGENTS.md))
-- [x] Functionele eisen & scope afgestemd (PTT multi-post intercom, Opus 48 kHz 10 ms, UDP unicast / WireGuard)
-- [x] Systeem- en type-ontwerp goedgekeurd ([docs/DESIGN.md](./docs/DESIGN.md) — `'UHUR'` header)
-- [x] Fase 1 implementatie (Pure Core + Linux HAL + Unit Tests)
-- [ ] Fase 2: Acoustic Echo Cancellation (AEC) voor full-duplex gebruik
+## Stapsgewijze Roadmap
+
+Zie [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md) voor de volledige onderbouwing per fase:
+
+- [x] **Fase 1 — Pure C23 Kern & Linux Intercom:** Zero-`malloc` Opus 48 kHz / 10 ms, `'UHUR'` v1 protocol, jitterbuffer met FEC/PLC, PTT `DuplexGate` met oproeptoon, Linux ALSA/UDP app en unit-tests.
+- [ ] **Fase 2 — Spraak-AGC & ESP32 Hardware Bring-up:** Spraakverstaanbaarheidsfilter/AGC in `core/` + `platform/esp32/` (8 MB PSRAM, I2S mic/DAC, `MCP23017` knoppen & LEDs).
+- [ ] **Fase 3 — 3-Slots Wi-Fi & Veilig Captive Portal (ESP32):** Eenvoudig eenmalig Wi-Fi instellen via telefoon en automatisch kiezen uit 3 onthouden netwerken.
+- [ ] **Fase 4 — `'UHUR'` v2 Crypto, `NodeId` & Roaming:** Eind-tot-eind encryptie (`X25519` + `ChaCha20-Poly1305`), losse knoppentoewijzing en naadloze IP-wissels.
+- [ ] **Fase 5 — Switchboard, "Kringen" & Eduroam-Fallback:** Webbeheer voor Kringen, automatische UDP Hole Punching én poort-443 TCP/TLS fallback voor restrictieve netwerken.
+- [ ] **Fase 6 — Acoustic Echo Cancellation (AEC):** Handsfree full-duplex optie achter de reeds voorbereide 10 ms DSP-poort.
