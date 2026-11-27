@@ -40,6 +40,7 @@ pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 # ---------------------------------------------------------------------------
 add_library(uhura_core STATIC
     src/core/types.c
+    src/core/audio_dsp.c
     src/core/wire_proto.c
     src/core/spsc_pcm_ring.c
     src/core/opus_codec.c
@@ -110,5 +111,7 @@ if(UHURA_BUILD_TESTS)
     uhura_add_test(test_spsc_pcm_ring     tests/test_spsc_pcm_ring.c)
     uhura_add_test(test_jitter_buffer     tests/test_jitter_buffer.c)
     uhura_add_test(test_opus_codec        tests/test_opus_codec.c)
+    uhura_add_test(test_audio_dsp         tests/test_audio_dsp.c)
     uhura_add_test(test_intercom_loopback tests/test_intercom_loopback.c)
+    uhura_add_test(test_care_listen       tests/test_care_listen.c)
 endif()

@@ -36,7 +36,7 @@ Het vak van de ICT'er verschuift fundamenteel: **het intypen van regels code is 
 3. **Harde kwaliteitskaders opleggen ([AGENTS.md](./AGENTS.md)):** Eerst een goedgekeurd ontwerp ([docs/DESIGN.md](./docs/DESIGN.md)), pas daarna implementatie onder strikte embedded-regels (*NASA Power of 10* & *Zenoh-pico* eigenaarschap).
 4. **Deterministisch testen voor veiligheid en betrouwbaarheid:** Door alle kernlogica 100% los te koppelen van besturingssysteem en hardware, wordt elk pakket, elk geheugenpad en elk verlies-scenario in milliseconden geautomatiseerd getest voordat het op echte hardware draait.
 
-> Gebruik deze repo gerust als studiemateriaal: lees eerst [AGENTS.md](./AGENTS.md), bekijk daarna het ontwerp in [docs/DESIGN.md](./docs/DESIGN.md) en de architectuurbesluiten in [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md), en zie hoe dat vertaald is naar de broncode in `include/`, `src/` en `tests/`.
+> Gebruik deze repo gerust als studiemateriaal: lees eerst [AGENTS.md](./AGENTS.md), bekijk daarna het ontwerp in [docs/DESIGN.md](./docs/DESIGN.md), het welzijnsoproep-ontwerp in [docs/DESIGN_CARE_LISTEN.md](./docs/DESIGN_CARE_LISTEN.md), de architectuurbesluiten in [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md) en de uitgebreide achtergrondverhalen voor **hexnut.net / Elektor** in [docs/PROJECT_LOG_BLOG_NOTES.md](./docs/PROJECT_LOG_BLOG_NOTES.md).
 
 ---
 
@@ -102,12 +102,41 @@ Elke post krijgt een `--id` (`1..16`), een leesbare `--name`, en één of meer `
 > `ALSA_PLUGIN_DIR=/usr/lib/$(uname -m)-linux-gnu/alsa-lib ./build/uhura ...`  
 > Testen zonder geluidskaart of microfoon kan altijd met `--no-audio` (zendt een 440 Hz testtoon tijdens PTT).
 
+### Praktijkscenario Testen: "Roep & 30s Luisteren" tussen 2 PC's
+
+Met dit scenario test je direct het volledige val-check scenario (noodvolume-override, replay-veilige `ChallengeNonce`, 30s gevoelig terugluisteren op afstand en weigering van onbevoegden):
+
+**1. Op PC A ("Huis Moeder", bijv. IP `192.168.1.50`):**
+Zet het volume bewust laag (`--volume 10` avondstand) en geef **uitsluitend** post `#1` (`Edwin`) luistertoestemming met `--allow-listen 1` (post `#4` `Buurman` krijgt die vlag *niet*):
+```bash
+./build/uhura --id 2 --name Ma-Woonkamer --port 4711 --volume 10 \
+  --peer 1:Edwin:192.168.1.10:4711 --allow-listen 1 \
+  --peer 4:Buurman:192.168.1.99:4711
+```
+
+**2. Op PC B ("Huis Edwin", bijv. IP `192.168.1.10`):**
+```bash
+./build/uhura --id 1 --name Edwin --port 4711 \
+  --peer 2:Ma-Woonkamer:192.168.1.50:4711
+```
+
+**3. Wat je stap voor stap kunt beproeven:**
+- **Gewone oproep (`Spatie` op PC B):** Je stem speelt op PC A netjes zacht af op `10%` kamer-volume. Zodra je loslaat blijft de microfoon op PC A dicht (`LUISTEREN`).
+- **Welzijnsoproep (`w` op PC B):**
+  1. Druk op `w` en roep *"Ma, is alles goed? Klop even op de deur!"* — op PC A springt de weergave direct naar **`Vol:100%(NOOD!)`**.
+  2. Druk nogmaals op `w` (of `Enter`) om los te laten. Binnen enkele milliseconden rondt de eenmalige 64-bit `ChallengeNonce`-handshake af, klinkt op PC A de korte aankondigingstoon en verschijnt **`>>> MIC OPEN 30s->#1 [ROOD] <<<`**.
+  3. Loop 5 tot 6 meter weg van PC A en roep zachtjes of klop op een deur: dankzij `OPUS_AUTO` en de `+24 dB` *Far-Field AGC* hoor je dit op PC B helder binnenkomen en licht **`2:Ma-Woonkamer[L]*(GELUID!)`** op.
+  4. Na exact **30 seconden** (of direct bij indrukken van `x` op PC A of PC B) sluit de microfoon met een sluittoon en keert het volume op PC A terug naar `10%`.
+
 ### Interactieve Toetsen in de Terminal
 | Toets | Actie |
 |---|---|
-| `Spatie` of `t` | **PTT Aan / Uit** (open kanaal om te spreken / sluit kanaal) |
-| `Enter` | Direct PTT loslaten (veiligheidsstop) |
-| `1` .. `9` | Zet post `1..9` aan/uit in de doel-selectie (meerdere tegelijk mogelijk) |
+| `Spatie` of `t` | **Normale PTT Aan / Uit** (gewone oproep op het ingestelde kamer-volume) |
+| `w` | **Welzijnsoproep ("Roep & 30s Luisteren")** — roept op **100% noodvolume** en opent na loslaten gedurende 30s het gevoelige luistervenster (alleen indien door ontvanger toegestaan met `--allow-listen <ID>`) |
+| `x` | **Sluit 30s luistervenster direct** (werkt zowel bij de beller als lokaal bij de bewoner) |
+| `-` / `+` | Verlaag / verhoog het lokale speaker-volume (`0% .. 100%`) |
+| `Enter` | Direct PTT loslaten |
+| `1` .. `9` | Zet post `1..9` aan/uit in de doel-selectie (meerdere kamers tegelijk mogelijk) |
 | `a` | **All-Call** (selecteer alle geconfigureerde posten tegelijk) |
 | `c` | Wis doel-selectie |
 | `q` | Netjes afsluiten |
@@ -121,7 +150,9 @@ Elke post krijgt een `--id` (`1..16`), een leesbare `--name`, en één of meer `
 ├── AGENTS.md                        # Strikte embedded C-regels & Design-First werkwijze
 ├── docs/
 │   ├── DESIGN.md                    # Systeem-, 'UHUR'-protocol- & type-ontwerp (Fase 1)
-│   └── REQUIREMENTS_AND_ROADMAP.md  # Architectuurbesluiten, Kringen, Eduroam & ESP32-plan
+│   ├── DESIGN_CARE_LISTEN.md        # Ontwerp & beveiliging 30s "Roep & Luister" welzijnscheck
+│   ├── REQUIREMENTS_AND_ROADMAP.md  # Architectuurbesluiten, Kringen, Eduroam & ESP32-plan
+│   └── PROJECT_LOG_BLOG_NOTES.md    # Verhaallijnen & ontwerpafwegingen (hexnut.net / Elektor)
 ├── pixi.toml                        # Multi-arch dependencies (linux-64 & linux-aarch64)
 ├── CMakeLists.txt                   # Strikte C23 build & CTest configuratie
 ├── include/

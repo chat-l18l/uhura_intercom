@@ -130,7 +130,11 @@ void AudioHal_stop_and_close(AudioHal_Owned *ctx);
 typedef enum {
     CLI_CMD_NONE = 0,
     CLI_CMD_TOGGLE_PTT,
+    CLI_CMD_TOGGLE_CARE_PTT,
     CLI_CMD_RELEASE_PTT,
+    CLI_CMD_ABORT_LISTEN,
+    CLI_CMD_VOL_DOWN,
+    CLI_CMD_VOL_UP,
     CLI_CMD_TOGGLE_STATION,
     CLI_CMD_SELECT_ALL,
     CLI_CMD_CLEAR_TARGETS,

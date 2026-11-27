@@ -51,6 +51,22 @@ NODISCARD CodecError OpusEncoder_init(
     return CODEC_OK;
 }
 
+void OpusEncoder_set_capture_mode(
+    OpusEncoder_Owned *ctx,
+    CaptureMode mode
+) {
+    assert(ctx != NULL);
+    assert(ctx->is_initialized);
+
+    OpusEncoder *enc = as_opus_enc(ctx);
+    if (mode == CAPTURE_MODE_FAR_FIELD_CARE) {
+        /* Preserve door knocks, footsteps, and distant non-speech sounds */
+        (void)opus_encoder_ctl(enc, OPUS_SET_SIGNAL(OPUS_AUTO));
+    } else {
+        (void)opus_encoder_ctl(enc, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    }
+}
+
 NODISCARD CodecError OpusEncoder_encode_frame(
     OpusEncoder_Owned *ctx,
     OpusEncodeParams params,

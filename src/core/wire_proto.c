@@ -16,6 +16,12 @@ static void write_be_u32(uint8_t *dst, uint32_t val) {
     dst[3] = (uint8_t)(val & 0xFFU);
 }
 
+static void write_be_u64(uint8_t *dst, uint64_t val) {
+    assert(dst != NULL);
+    write_be_u32(&dst[0], (uint32_t)((val >> 32U) & 0xFFFFFFFFULL));
+    write_be_u32(&dst[4], (uint32_t)(val & 0xFFFFFFFFULL));
+}
+
 static uint16_t read_be_u16(const uint8_t *src) {
     assert(src != NULL);
     return (uint16_t)(((uint16_t)src[0] << 8U) | (uint16_t)src[1]);
@@ -29,9 +35,28 @@ static uint32_t read_be_u32(const uint8_t *src) {
            (uint32_t)src[3];
 }
 
+static uint64_t read_be_u64(const uint8_t *src) {
+    assert(src != NULL);
+    const uint64_t hi = (uint64_t)read_be_u32(&src[0]);
+    const uint64_t lo = (uint64_t)read_be_u32(&src[4]);
+    return (hi << 32U) | lo;
+}
+
 static bool is_valid_packet_kind(uint8_t raw_kind) {
     return (raw_kind >= (uint8_t)PACKET_KIND_AUDIO) &&
-           (raw_kind <= (uint8_t)PACKET_KIND_HEARTBEAT);
+           (raw_kind <= (uint8_t)PACKET_KIND_LISTEN_ABORT);
+}
+
+static bool is_valid_payload_for_kind(PacketKind kind, size_t payload_len, const uint8_t *data) {
+    if (kind == PACKET_KIND_AUDIO) {
+        return (payload_len > 0U) &&
+               (payload_len <= (size_t)UHURA_MAX_OPUS_BYTES) &&
+               (data != NULL);
+    }
+    if ((kind == PACKET_KIND_LISTEN_CHALLENGE) || (kind == PACKET_KIND_LISTEN_CONFIRM)) {
+        return (payload_len == (size_t)UHURA_CHALLENGE_NONCE_BYTES) && (data != NULL);
+    }
+    return (payload_len == 0U);
 }
 
 NODISCARD WireError WireProto_serialize(
@@ -50,15 +75,8 @@ NODISCARD WireError WireProto_serialize(
     if (params.payload.len > (size_t)UHURA_MAX_OPUS_BYTES) {
         return WIRE_ERR_PAYLOAD_TOO_LARGE;
     }
-
-    if (params.kind == PACKET_KIND_AUDIO) {
-        if ((params.payload.len == 0U) || (params.payload.data == NULL)) {
-            return WIRE_ERR_INVALID_PAYLOAD;
-        }
-    } else {
-        if (params.payload.len != 0U) {
-            return WIRE_ERR_INVALID_PAYLOAD;
-        }
+    if (!is_valid_payload_for_kind(params.kind, params.payload.len, params.payload.data)) {
+        return WIRE_ERR_INVALID_PAYLOAD;
     }
 
     uint8_t *hdr = out_datagram->bytes;
@@ -88,6 +106,31 @@ NODISCARD WireError WireProto_serialize(
     assert(out_datagram->len >= (uint16_t)UHURA_WIRE_HEADER_BYTES);
     assert(out_datagram->len <= (uint16_t)UHURA_MAX_WIRE_BYTES);
     return WIRE_OK;
+}
+
+NODISCARD WireError WireProto_serialize_nonce(
+    WireDatagram_Owned *out_datagram,
+    WireNonceSerializeParams params
+) {
+    assert(out_datagram != NULL);
+    if ((params.kind != PACKET_KIND_LISTEN_CHALLENGE) &&
+        (params.kind != PACKET_KIND_LISTEN_CONFIRM)) {
+        *out_datagram = (WireDatagram_Owned){0};
+        return WIRE_ERR_INVALID_KIND;
+    }
+
+    uint8_t nonce_bytes[UHURA_CHALLENGE_NONCE_BYTES];
+    write_be_u64(nonce_bytes, params.nonce.val);
+
+    return WireProto_serialize(out_datagram, (WireSerializeParams){
+        .kind    = params.kind,
+        .sender  = params.sender,
+        .flags   = { .bits = (uint8_t)WIRE_FLAG_CARE_CALL },
+        .session = params.session,
+        .seq     = { .num = 0U },
+        .targets = params.targets,
+        .payload = { .data = nonce_bytes, .len = sizeof(nonce_bytes) }
+    });
 }
 
 NODISCARD WireError WireProto_parse(
@@ -134,10 +177,10 @@ NODISCARD WireError WireProto_parse(
     }
 
     const PacketKind kind = (PacketKind)raw_kind;
-    if ((kind == PACKET_KIND_AUDIO) && (payload_len == 0U)) {
-        return WIRE_ERR_INVALID_PAYLOAD;
-    }
-    if ((kind != PACKET_KIND_AUDIO) && (payload_len != 0U)) {
+    const uint8_t *payload_ptr =
+        (payload_len > 0U) ? &raw_datagram.data[UHURA_WIRE_HEADER_BYTES] : NULL;
+
+    if (!is_valid_payload_for_kind(kind, (size_t)payload_len, payload_ptr)) {
         return WIRE_ERR_INVALID_PAYLOAD;
     }
 
@@ -148,9 +191,24 @@ NODISCARD WireError WireProto_parse(
     out_view->seq     = (SeqNum){ .num = read_be_u32(&hdr[12]) };
     out_view->targets = (TargetPeerMask){ .bits = read_be_u16(&hdr[16]) };
     out_view->payload = (ByteSlice_Loaned){
-        .data = (payload_len > 0U) ? &raw_datagram.data[UHURA_WIRE_HEADER_BYTES] : NULL,
+        .data = payload_ptr,
         .len  = (size_t)payload_len
     };
 
+    return WIRE_OK;
+}
+
+NODISCARD WireError WireProto_parse_nonce(
+    ByteSlice_Loaned payload,
+    ChallengeNonce *out_nonce
+) {
+    assert(out_nonce != NULL);
+    *out_nonce = (ChallengeNonce){ .val = 0ULL };
+
+    if ((payload.data == NULL) || (payload.len != (size_t)UHURA_CHALLENGE_NONCE_BYTES)) {
+        return WIRE_ERR_INVALID_PAYLOAD;
+    }
+
+    out_nonce->val = read_be_u64(payload.data);
     return WIRE_OK;
 }

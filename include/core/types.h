@@ -28,7 +28,9 @@ enum {
     UHURA_MAX_RX_STREAMS       = 4U,
     UHURA_JITTER_CAPACITY      = 32U,    /* Power-of-two: 320 ms max window */
     UHURA_SPSC_RING_CAPACITY   = 16U,    /* Power-of-two: 160 ms audio ring */
-    UHURA_STATION_NAME_MAX     = 24U
+    UHURA_STATION_NAME_MAX     = 24U,
+    UHURA_CHALLENGE_NONCE_BYTES = 8U,    /* 64-bit anti-replay challenge */
+    UHURA_CARE_LISTEN_MAX_TICKS = 3000U  /* Hard 30.0 s cap (3000 * 10 ms) */
 };
 
 static_assert(UHURA_SAMPLES_PER_FRAME * 100U == UHURA_SAMPLE_RATE_HZ,
@@ -58,6 +60,13 @@ typedef struct { uint16_t count; } SlotCount;       /* Number of 10 ms packet/ri
 typedef struct { uint32_t ms;    } DurationMs;
 typedef struct { uint64_t us;    } MonotonicTimeUs;
 typedef struct { uint16_t port;  } UdpPort;
+typedef struct { uint64_t val;   } ChallengeNonce;
+typedef struct { uint8_t  pct;   } VolumePercent;   /* Speaker volume 0..100% */
+
+typedef enum {
+    CAPTURE_MODE_NORMAL_VOICE   = 0,
+    CAPTURE_MODE_FAR_FIELD_CARE = 1  /* +24 dB Far-Field + OPUS_SIGNAL_AUTO for door knocks */
+} CaptureMode;
 
 /* =========================================================================
  * Borrowed Views (_Loaned — Rule 2: NEVER store in long-lived _Owned structs)

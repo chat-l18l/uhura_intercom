@@ -15,7 +15,7 @@
 /* =========================================================================
  * Main Linux Intercom Node Runner
  * Strictly zero global variables (Rule 4): uses signalfd + timerfd + poll()
- * and a single static-lifetime AppRuntime_Owned allocated once in main().
+ * and a single AppRuntime_Owned in main().
  * ========================================================================= */
 typedef struct {
     IntercomCore_Owned core;
@@ -30,7 +30,9 @@ typedef struct {
     char               play_dev[UHURA_DEVICE_NAME_MAX];
     UdpPort            bind_port;
     PttButtonState     ptt_state;
+    CallKind           ptt_call_kind;
     uint32_t           synth_phase_q32;
+    uint32_t           synth_tick_counter;
 } AppRuntime_Owned;
 
 /* Sine lookup for headless --no-audio test tone (440 Hz A4) */
@@ -77,7 +79,7 @@ static bool parse_u16_strict(const char *s, uint16_t *out_val) {
     return true;
 }
 
-/* Parses "--peer ID:Name:IP:Port" (e.g. "2:Machinekamer:10.8.0.2:4711") */
+/* Parses "--peer ID:Name:IP:Port" (e.g. "2:Ma-Woonkamer:10.8.0.2:4711") */
 static bool parse_and_add_peer(AppRuntime_Owned *app, const char *spec) {
     assert(app != NULL);
     if (spec == NULL) {
@@ -100,7 +102,6 @@ static bool parse_and_add_peer(AppRuntime_Owned *app, const char *spec) {
     }
     *c2 = '\0';
 
-    /* Find last colon so IPv6 addresses work as well as IPv4 */
     char *ip_and_port = c2 + 1;
     char *c_last = strrchr(ip_and_port, ':');
     if (c_last == NULL) {
@@ -142,12 +143,14 @@ static void print_usage(const char *prog) {
     (void)fprintf(
         stderr,
         "Gebruik: %s --id <1..16> [--name <Naam>] [--bind <IP>] [--port <Poort>]\n"
-        "            --peer <ID:Naam:IP:Poort> [--peer ...] [--capture-dev <ALSA>]\n"
-        "            [--playback-dev <ALSA>] [--no-chime] [--no-audio]\n\n"
-        "Voorbeeld (Brug op WireGuard 10.8.0.1):\n"
-        "  %s --id 1 --name Brug --port 4711 \\\n"
-        "     --peer 2:Machinekamer:10.8.0.2:4711 \\\n"
-        "     --peer 3:Kantine:10.8.0.3:4711\n",
+        "            --peer <ID:Naam:IP:Poort> [--peer ...] [--allow-listen <ID>]\n"
+        "            [--volume <0..100>] [--capture-dev <ALSA>] [--playback-dev <ALSA>]\n"
+        "            [--no-chime] [--no-audio]\n\n"
+        "Voorbeeld (Kastje bij Moeder: geeft ALLEEN post #1 Edwin en #4 Zus luisterrechten):\n"
+        "  %s --id 2 --name Ma-Woonkamer --port 4712 --volume 60 \\\n"
+        "     --peer 1:Edwin:10.8.0.1:4711 --allow-listen 1 \\\n"
+        "     --peer 4:Zus:10.8.0.4:4711   --allow-listen 4 \\\n"
+        "     --peer 5:Buurvrouw:10.8.0.5:4711\n",
         prog,
         prog
     );
@@ -199,21 +202,42 @@ static void drain_tx_outbox(AppRuntime_Owned *app) {
 
 static void fill_synth_mic_frame(AppRuntime_Owned *app, PcmFrame_Owned *out_mic) {
     PcmFrame_init_silence(out_mic);
-    if (app->ptt_state != PTT_PRESSED) {
-        return;
-    }
-    /* 440 Hz test sine wave when running with --no-audio */
-    const uint32_t step_440_q32 = 39370534U;
-    for (size_t i = 0U; i < (size_t)UHURA_SAMPLES_PER_FRAME; ++i) {
-        const size_t idx   = (size_t)((app->synth_phase_q32 >> 27U) & 0x1FU);
-        out_mic->samples[i] = TEST_SINE_32[idx];
-        app->synth_phase_q32 += step_440_q32;
+    app->synth_tick_counter += 1U;
+
+    const DuplexState st = DuplexGate_state(&app->core.duplex_gate);
+    if (st == DUPLEX_STATE_TRANSMITTING) {
+        /* Continuous 440 Hz tone during manual PTT in --no-audio test mode */
+        const uint32_t step_440_q32 = 39370534U;
+        for (size_t i = 0U; i < (size_t)UHURA_SAMPLES_PER_FRAME; ++i) {
+            const size_t idx    = (size_t)((app->synth_phase_q32 >> 27U) & 0x1FU);
+            out_mic->samples[i] = TEST_SINE_32[idx];
+            app->synth_phase_q32 += step_440_q32;
+        }
+    } else if (st == DUPLEX_STATE_AUTO_REPLY_TX) {
+        /* Simulated faint door-knock pulse (80 ms every 1.0 s) in --no-audio test mode */
+        if ((app->synth_tick_counter % 100U) < 8U) {
+            const uint32_t step_220_q32 = 19685267U;
+            for (size_t i = 0U; i < (size_t)UHURA_SAMPLES_PER_FRAME; ++i) {
+                const size_t idx    = (size_t)((app->synth_phase_q32 >> 27U) & 0x1FU);
+                out_mic->samples[i] = (int16_t)(TEST_SINE_32[idx] >> 3); /* Faint distant level */
+                app->synth_phase_q32 += step_220_q32;
+            }
+        }
     }
 }
 
+static void adjust_user_volume(AppRuntime_Owned *app, int delta_pct) {
+    const int cur = (int)AudioDsp_user_volume(&app->core.audio_dsp).pct;
+    int next = cur + delta_pct;
+    if (next < 0) {
+        next = 0;
+    } else if (next > 100) {
+        next = 100;
+    }
+    IntercomCore_set_user_volume(&app->core, (VolumePercent){ .pct = (uint8_t)next });
+}
+
 int main(int argc, char **argv) {
-    /* Static storage duration inside main scope via single stack/BSS-sized struct?
-     * AppRuntime_Owned is ~330 KB: well within Linux 8 MB default stack, Zero malloc! */
     AppRuntime_Owned app;
     memset(&app, 0, sizeof(app));
     app.timer_fd.fd  = -1;
@@ -225,10 +249,11 @@ int main(int argc, char **argv) {
     copy_cstr_bounded(app.play_dev, sizeof(app.play_dev), "default");
 
     StationId local_id        = { .id = 0U };
+    VolumePercent init_volume = { .pct = 80U };
     ChimeMode chime_mode      = CHIME_ENABLED;
     AudioBackendMode aud_mode = AUDIO_MODE_ALSA;
 
-    /* Pass 1: parse station options */
+    /* Pass 1: parse station & audio options */
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "--help") == 0) || (strcmp(argv[i], "-h") == 0)) {
             print_usage(argv[0]);
@@ -249,6 +274,13 @@ int main(int argc, char **argv) {
                 (void)fprintf(stderr, "Ongeldige --port\n");
                 return 1;
             }
+        } else if ((strcmp(argv[i], "--volume") == 0) && ((i + 1) < argc)) {
+            uint16_t vol_u16 = 0U;
+            if (!parse_u16_strict(argv[++i], &vol_u16) || (vol_u16 > 100U)) {
+                (void)fprintf(stderr, "Ongeldig --volume (verwacht 0..100)\n");
+                return 1;
+            }
+            init_volume.pct = (uint8_t)vol_u16;
         } else if ((strcmp(argv[i], "--capture-dev") == 0) && ((i + 1) < argc)) {
             copy_cstr_bounded(app.cap_dev, sizeof(app.cap_dev), argv[++i]);
         } else if ((strcmp(argv[i], "--playback-dev") == 0) && ((i + 1) < argc)) {
@@ -257,8 +289,9 @@ int main(int argc, char **argv) {
             chime_mode = CHIME_DISABLED;
         } else if (strcmp(argv[i], "--no-audio") == 0) {
             aud_mode = AUDIO_MODE_SYNTH_NO_HW;
-        } else if ((strcmp(argv[i], "--peer") == 0) && ((i + 1) < argc)) {
-            ++i; /* Handled in pass 2 after core + UDP socket open */
+        } else if (((strcmp(argv[i], "--peer") == 0) ||
+                    (strcmp(argv[i], "--allow-listen") == 0)) && ((i + 1) < argc)) {
+            ++i; /* Handled in pass 2 / pass 3 */
         } else {
             (void)fprintf(stderr, "Onbekende optie: %s\n", argv[i]);
             print_usage(argv[0]);
@@ -283,6 +316,7 @@ int main(int argc, char **argv) {
         (void)fprintf(stderr, "Fout: IntercomCore_init mislukt.\n");
         return 1;
     }
+    IntercomCore_set_user_volume(&app.core, init_volume);
 
     if (UdpTransport_open(&app.udp, (UdpBindParams){
             .bind_ip   = app.bind_ip,
@@ -293,7 +327,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Pass 2: register peers */
+    /* Pass 2: register peers (all default to LISTEN_PERM_DENIED) */
     size_t peer_count = 0U;
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "--peer") == 0) && ((i + 1) < argc)) {
@@ -304,6 +338,26 @@ int main(int argc, char **argv) {
                 return 1;
             }
             peer_count += 1U;
+        }
+    }
+
+    /* Pass 3: apply explicit local --allow-listen permissions */
+    for (int i = 1; i < argc; ++i) {
+        if ((strcmp(argv[i], "--allow-listen") == 0) && ((i + 1) < argc)) {
+            uint16_t perm_id = 0U;
+            if (!parse_u16_strict(argv[++i], &perm_id) ||
+                (IntercomCore_set_peer_listen_permission(&app.core, (PeerPermissionParams){
+                    .station    = { .id = (uint8_t)perm_id },
+                    .permission = LISTEN_PERM_ALLOWED
+                }) != CORE_OK)) {
+                (void)fprintf(
+                    stderr,
+                    "Fout: --allow-listen %u verwijst niet naar een geregistreerde peer.\n",
+                    (unsigned int)perm_id
+                );
+                UdpTransport_close(&app.udp);
+                return 1;
+            }
         }
     }
 
@@ -360,7 +414,7 @@ int main(int argc, char **argv) {
 
         const MonotonicTimeUs now = monotonic_now_us();
 
-        /* 1. Stop signal (SIGINT / SIGTERM) */
+        /* 1. Stop signal */
         if ((pfds[2].revents & POLLIN) != 0) {
             struct signalfd_siginfo fdsi;
             (void)read(app.signal_fd.fd, &fdsi, sizeof(fdsi));
@@ -368,7 +422,7 @@ int main(int argc, char **argv) {
             break;
         }
 
-        /* 2. Incoming UDP datagrams (bounded burst up to 32 packets per poll) */
+        /* 2. Incoming UDP datagrams (may enqueue Challenge/Confirm replies -> drain outbox!) */
         if ((pfds[0].revents & POLLIN) != 0) {
             for (size_t rx_i = 0U; rx_i < 32U; ++rx_i) {
                 WireDatagram_Owned rx_dgram = {0};
@@ -383,22 +437,49 @@ int main(int argc, char **argv) {
                     });
                 }
             }
+            drain_tx_outbox(&app);
         }
 
-        /* 3. Interactive PTT & target selection keys */
+        /* 3. Interactive CLI commands */
         if ((pfds[3].fd >= 0) && ((pfds[3].revents & POLLIN) != 0)) {
             const CliCommand cmd = CliControl_read_command(&app.cli);
             if (cmd.kind == CLI_CMD_QUIT) {
                 running = false;
                 break;
             } else if (cmd.kind == CLI_CMD_TOGGLE_PTT) {
-                app.ptt_state = (app.ptt_state == PTT_PRESSED) ? PTT_RELEASED : PTT_PRESSED;
-                IntercomCore_set_ptt(&app.core, app.ptt_state);
+                app.ptt_state     = (app.ptt_state == PTT_PRESSED) ? PTT_RELEASED : PTT_PRESSED;
+                app.ptt_call_kind = CALL_KIND_NORMAL_PTT;
+                IntercomCore_set_ptt_command(&app.core, (PttCommandParams){
+                    .button    = app.ptt_state,
+                    .call_kind = CALL_KIND_NORMAL_PTT
+                });
+                drain_tx_outbox(&app);
+            } else if (cmd.kind == CLI_CMD_TOGGLE_CARE_PTT) {
+                if (app.ptt_state == PTT_PRESSED) {
+                    app.ptt_state = PTT_RELEASED;
+                } else {
+                    app.ptt_state     = PTT_PRESSED;
+                    app.ptt_call_kind = CALL_KIND_CARE_LISTEN;
+                }
+                IntercomCore_set_ptt_command(&app.core, (PttCommandParams){
+                    .button    = app.ptt_state,
+                    .call_kind = app.ptt_call_kind
+                });
                 drain_tx_outbox(&app);
             } else if (cmd.kind == CLI_CMD_RELEASE_PTT) {
                 app.ptt_state = PTT_RELEASED;
-                IntercomCore_set_ptt(&app.core, PTT_RELEASED);
+                IntercomCore_set_ptt_command(&app.core, (PttCommandParams){
+                    .button    = PTT_RELEASED,
+                    .call_kind = app.ptt_call_kind
+                });
                 drain_tx_outbox(&app);
+            } else if (cmd.kind == CLI_CMD_ABORT_LISTEN) {
+                IntercomCore_abort_care_listen(&app.core);
+                drain_tx_outbox(&app);
+            } else if (cmd.kind == CLI_CMD_VOL_DOWN) {
+                adjust_user_volume(&app, -10);
+            } else if (cmd.kind == CLI_CMD_VOL_UP) {
+                adjust_user_volume(&app, +10);
             } else if (cmd.kind == CLI_CMD_TOGGLE_STATION) {
                 const TargetPeerMask cur = IntercomCore_selected_targets(&app.core);
                 const TargetPeerMask next = TargetPeerMask_contains(cur, cmd.station_arg)
@@ -410,7 +491,7 @@ int main(int argc, char **argv) {
             } else if (cmd.kind == CLI_CMD_CLEAR_TARGETS) {
                 IntercomCore_set_targets(&app.core, TargetPeerMask_none());
             }
-            ui_tick_div = 10U; /* Trigger immediate UI refresh */
+            ui_tick_div = 10U;
         }
 
         /* 4. 10 ms deterministic audio & protocol tick */
@@ -418,7 +499,7 @@ int main(int argc, char **argv) {
             uint64_t expirations = 0ULL;
             (void)read(app.timer_fd.fd, &expirations, sizeof(expirations));
             if (expirations > 4ULL) {
-                expirations = 4ULL; /* Cap catch-up ticks to stay real-time */
+                expirations = 4ULL;
             }
 
             for (uint64_t t = 0ULL; t < expirations; ++t) {
@@ -449,7 +530,7 @@ int main(int argc, char **argv) {
             }
 
             ui_tick_div += 1U;
-            if (ui_tick_div >= 10U) { /* Refresh terminal status bar at 10 Hz */
+            if (ui_tick_div >= 10U) {
                 ui_tick_div = 0U;
                 CliControl_render_status(&app.cli, (CliStatusRenderParams){
                     .core       = &app.core,
@@ -460,9 +541,11 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Send clean TALK_END if exiting while PTT was held */
     if (app.ptt_state == PTT_PRESSED) {
-        IntercomCore_set_ptt(&app.core, PTT_RELEASED);
+        IntercomCore_set_ptt_command(&app.core, (PttCommandParams){
+            .button    = PTT_RELEASED,
+            .call_kind = app.ptt_call_kind
+        });
         drain_tx_outbox(&app);
     }
 

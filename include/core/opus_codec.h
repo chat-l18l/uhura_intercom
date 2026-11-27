@@ -58,6 +58,12 @@ NODISCARD CodecError OpusEncoder_init(
     OpusEncoderConfigParams params
 );
 
+/* Switches dynamically between voice-optimized PTT and non-speech-preserving Care mode */
+void OpusEncoder_set_capture_mode(
+    OpusEncoder_Owned *ctx,
+    CaptureMode mode
+);
+
 NODISCARD CodecError OpusEncoder_encode_frame(
     OpusEncoder_Owned *ctx,
     OpusEncodeParams params,

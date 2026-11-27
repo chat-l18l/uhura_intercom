@@ -11,7 +11,6 @@ NODISCARD HalError CliControl_open(CliControl_Owned *ctx) {
     ctx->tty_fd.fd = -1;
 
     if (isatty(STDIN_FILENO) == 0) {
-        /* Non-interactive mode (systemd / background daemon): run without TTY */
         ctx->is_open = true;
         return HAL_OK;
     }
@@ -72,8 +71,16 @@ NODISCARD CliCommand CliControl_read_command(const CliControl_Owned *ctx) {
 
     if ((ch == ' ') || (ch == 't') || (ch == 'T')) {
         cmd.kind = CLI_CMD_TOGGLE_PTT;
+    } else if ((ch == 'w') || (ch == 'W')) {
+        cmd.kind = CLI_CMD_TOGGLE_CARE_PTT;
     } else if ((ch == '\n') || (ch == '\r')) {
         cmd.kind = CLI_CMD_RELEASE_PTT;
+    } else if ((ch == 'x') || (ch == 'X')) {
+        cmd.kind = CLI_CMD_ABORT_LISTEN;
+    } else if ((ch == '-') || (ch == '_')) {
+        cmd.kind = CLI_CMD_VOL_DOWN;
+    } else if ((ch == '+') || (ch == '=')) {
+        cmd.kind = CLI_CMD_VOL_UP;
     } else if ((ch >= '1') && (ch <= '9')) {
         cmd.kind        = CLI_CMD_TOGGLE_STATION;
         cmd.station_arg = (StationId){ .id = (uint8_t)(ch - '0') };
@@ -97,23 +104,46 @@ void CliControl_render_status(const CliControl_Owned *ctx, CliStatusRenderParams
     }
 
     const DuplexState st = DuplexGate_state(&params.core->duplex_gate);
-    const char *state_str = "LUISTEREN";
+    char state_buf[44];
     if (st == DUPLEX_STATE_TRANSMITTING) {
-        state_str = ">>> ZENDEN (PTT) <<<";
+        if (params.core->active_tx_call_kind == CALL_KIND_CARE_LISTEN) {
+            (void)snprintf(state_buf, sizeof(state_buf), ">>> WELZIJNS-ROEP [ROOD] <<<");
+        } else {
+            (void)snprintf(state_buf, sizeof(state_buf), ">>> ZENDEN (PTT) [ROOD] <<<");
+        }
+    } else if (st == DUPLEX_STATE_AUTO_REPLY_TX) {
+        const uint16_t rem_ticks = DuplexGate_auto_reply_remaining(&params.core->duplex_gate).count;
+        const unsigned int rem_s = (unsigned int)((rem_ticks + 99U) / 100U);
+        (void)snprintf(
+            state_buf,
+            sizeof(state_buf),
+            ">>> MIC OPEN %2us->#%u [ROOD] <<<",
+            rem_s,
+            (unsigned int)params.core->authorized_listener.id
+        );
     } else if (st == DUPLEX_STATE_HANGOVER) {
-        state_str = "COOLDOWN";
+        (void)snprintf(state_buf, sizeof(state_buf), "COOLDOWN");
+    } else {
+        (void)snprintf(state_buf, sizeof(state_buf), "LUISTEREN");
     }
+
+    const VolumePercent eff_vol = IntercomCore_effective_volume(params.core);
+    const bool is_emerg_vol =
+        (AudioDsp_playback_gain_mode(&params.core->audio_dsp) == GAIN_MODE_EMERGENCY_FULL);
 
     const TargetPeerMask sel     = IntercomCore_selected_targets(params.core);
     const TargetPeerMask talkers = IntercomCore_active_talkers(params.core);
+    const TargetPeerMask audible = IntercomCore_audible_talkers(params.core);
     const char *self_label       = (params.local_name != NULL) ? params.local_name : "Post";
 
     (void)fprintf(
         stdout,
-        "\r\033[2K[UHURA #%u %s] %-20s | Doel: [",
+        "\r\033[2K[#%u %s] %-31s | Vol:%u%%%s | [",
         (unsigned int)params.core->local_station.id,
         self_label,
-        state_str
+        state_buf,
+        (unsigned int)eff_vol.pct,
+        is_emerg_vol ? "(NOOD!)" : ""
     );
 
     bool first = true;
@@ -122,27 +152,37 @@ void CliControl_render_status(const CliControl_Owned *ctx, CliStatusRenderParams
         if (!peer->is_configured) {
             continue;
         }
-        const StationId sid   = { .id = id };
-        const bool is_sel     = TargetPeerMask_contains(sel, sid);
-        const bool is_online  = IntercomCore_is_peer_online(params.core, sid, params.now);
-        const bool is_talking = TargetPeerMask_contains(talkers, sid);
+        const StationId sid    = { .id = id };
+        const bool is_sel      = TargetPeerMask_contains(sel, sid);
+        const bool is_online   = IntercomCore_is_peer_online(params.core, sid, params.now);
+        const bool is_stream   = TargetPeerMask_contains(talkers, sid);
+        const bool is_loud     = TargetPeerMask_contains(audible, sid);
+        const bool can_listen  = (peer->listen_perm == LISTEN_PERM_ALLOWED);
 
         if (!first) {
             (void)fprintf(stdout, " ");
         }
         first = false;
 
+        const char *act_tag = "";
+        if (is_loud) {
+            act_tag = "(GELUID!)";
+        } else if (is_stream) {
+            act_tag = "(open)";
+        }
+
         (void)fprintf(
             stdout,
-            "%s%u:%s%s%s",
+            "%s%u:%s%s%s%s",
             is_sel ? "+" : "-",
             (unsigned int)id,
             (peer->name[0] != '\0') ? peer->name : "Peer",
+            can_listen ? "[L]" : "",
             is_online ? "*" : "",
-            is_talking ? "(SPREEKT!)" : ""
+            act_tag
         );
     }
 
-    (void)fprintf(stdout, "] (Spatie=PTT, 1-9=Toggle, a=All, q=Stop)");
+    (void)fprintf(stdout, "] (Spatie=PTT, w=Welzijn+30s, x=StopMic, -/+=Vol, q=Uit)");
     (void)fflush(stdout);
 }
