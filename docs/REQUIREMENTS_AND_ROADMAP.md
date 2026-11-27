@@ -74,11 +74,12 @@ We hoeven het wiel niet opnieuw uit te vinden; twee eerdere eigen projecten leve
   - Op het ouderen-/huiskamerkastje werkt elke grote naamknop als **directe Push-to-Talk naar die persoon** (indrukken **[EDWIN]** = selecteer Edwin + spreek; loslaten = klaar). Op een uitgebreid paneel blijft meervoudige selectie + groepsomroep eveneens beschikbaar.
   - De `MCP23017` wordt aangesloten met zijn `INTA`/`INTB` hardware-interruptlijn op één ESP32 GPIO, zodat de I2C-bus in rust stil is (geen digitale stoorpulsen bij de audio-printbanen) en direct bij een knopdruk wordt uitgelezen.
 
-### Besluit 7 — Audio-keten Afgestemd op Slechthorenden (Pure Core DSP)
-- **Keuze:** Voeg in `src/core/` een vaste-komma (integer, 0 `malloc`) spraakkonditionering toe:
+### Besluit 7 — Audio-keten Afgestemd op Slechthorenden & "Roep & Luister" Val-check (Pure Core DSP)
+- **Keuze:** Voeg in `src/core/` een vaste-komma (integer, 0 `malloc`) spraakkonditionering én een strikt geautoriseerde **30-seconden "Roep & Luister" welzijnsmodus** toe (volledig uitgewerkt in [DESIGN_CARE_LISTEN.md](./DESIGN_CARE_LISTEN.md)):
   1. **150 Hz 2e-orde High-Pass Filter** (verwijdert kast-dreun en plofklanken, spaart versterkervermogen voor het spraakgebied).
-  2. **Spraak-AGC + Soft Limiter** (tilt zachte sprekers op naar een vast luid referentieniveau zonder digitale clipping).
-  3. **Hardware Mute-sturing** voor de I2S DAC/versterker bij opstarten en rust (geen ruis of inschakel-knal in een stille slaapkamer/woonkamer).
+  2. **Spraak-AGC + Soft Limiter + Far-Field Boost (+24 dB tijdens 30s welzijns-luisteren):** Tilt zachte sprekers — en tijdens een welzijnscheck zelfs zacht roepen of kloppen op een deur op 6 meter afstand (met `OPUS_SIGNAL_AUTO` zodat geklop niet als ruis wordt weggefilterd!) — op naar een duidelijk verstaanbaar niveau zonder clipping.
+  3. **Strikte lokale per-peer luistertoestemming (`LISTEN_PERM_ALLOWED`), Nood-Volume Override & Multi-Kamer Dekking:** Alleen specifiek op het kastje van de bewoner zelf goedgekeurde personen (bijv. zoon en dochter, nooit andere kring-leden) kunnen via een replay-veilige `ChallengeNonce` een Welzijnsoproep doen op **100% noodvolume** gevolgd door een eenmalig **30s Far-Field luistervenster** (altijd met hoorbare toon en rood **MIC AAN**-lampje). Meerdere kastjes in één huis (bijv. *Woonkamer* + *Overloop/Badkamer*) kunnen hierbij synchroon roepen én tegelijk terugluisteren zonder rondzingen, met indicatie uit welke ruimte geluid klinkt.
+  4. **Hardware Mute-sturing** voor de I2S DAC/versterker bij opstarten en rust (geen ruis of inschakel-knal in een stille slaapkamer/woonkamer).
 
 ### Besluit 8 — Veilig Wi-Fi Captive Portal met 3 Netwerk-slots
 - **Keuze:** Neem het 3-slots scan-ontwerp uit `Shared_Energy_Telemetry_Device` over (zodat *Thuis Werkbank*, *Huis Moeder* en *Telefoon-Hotspot* naast elkaar bewaard blijven zonder trage 20-minuten verbindingslussen).
