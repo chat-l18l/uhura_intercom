@@ -1,0 +1,16 @@
+# UHURA Intercom Configuratie (kopieer naar 'uhura.txt' in dezelfde map als uhura.exe)
+
+id = 4
+name = Zus
+port = 4711
+volume = 80
+
+# Bekende posten (formaat: ID:Naam:IP-adres:Poort)
+peer = 1:Edwin:192.168.1.10:4711
+peer = 2:Ma-Woonkamer:192.168.1.50:4711
+peer = 3:Ma-Overloop:192.168.1.51:4711
+
+# Optioneel: wie mag op DIT apparaat een 30-seconden welzijns-luistervenster openen?
+# (Standaard mag niemand dat. Je kunt meerdere ID's op één regel zetten met komma's,
+#  bijv. Edwin=1 en Zus=4, of meerdere allow_listen regels onder elkaar gebruiken)
+# allow_listen = 1, 4

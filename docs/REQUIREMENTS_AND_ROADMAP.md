@@ -1,6 +1,11 @@
 # Masterplan, Architectuurbesluiten & Stapsgewijze Roadmap (`UHURA`)
 
-Dit document legt de systeemeisen, ontwerpbeslissingen (met onderbouwing) en het stapsgewijze bouw- en testplan vast voor het volledige **UHURA Intercomsysteem** over meerdere targets (**Linux `x86_64`/`aarch64`** én **ESP32 met 8 MB PSRAM, I2S audio en `MCP23017` bediening**) en meerdere netwerkomgevingen (LAN, thuis-internet én **Eduroam**/CGNAT).
+Dit document legt de systeemeisen, ontwerpbeslissingen (met onderbouwing) en het stapsgewijze bouw- en testplan vast voor het volledige **UHURA Intercomsysteem** over **drie target-platformen**:
+1. **Linux Native** (`x86_64` & `aarch64` — PC, server, Raspberry Pi, NVIDIA Jetson)
+2. **ESP32 Embedded** (8 MB PSRAM, I2S microfoons + Audio DAC en `MCP23017` fysieke knoppen/LEDs)
+3. **Windows 11 Native** (`uhura.exe` — één kleine standalone `.exe` op WASAPI + Winsock2 + Win32 paneel/systray, zie [DESIGN_WINDOWS_CLIENT.md](./DESIGN_WINDOWS_CLIENT.md))
+
+en over meerdere netwerkomgevingen (LAN, thuis-internet én **Eduroam**/CGNAT).
 
 Net als in [Shared_Energy_Telemetry_Device](https://github.com/edwin-oetelaar/Shared_Energy_Telemetry_Device) geldt één vaste regel voor de fasering: **elke stap eindigt met een werkend en testbaar systeem**, en vóór elke stap keuren we eerst het deelontwerp goed conform [AGENTS.md](../AGENTS.md).
 
@@ -85,27 +90,27 @@ We hoeven het wiel niet opnieuw uit te vinden; twee eerdere eigen projecten leve
 - **Keuze:** Neem het 3-slots scan-ontwerp uit `Shared_Energy_Telemetry_Device` over (zodat *Thuis Werkbank*, *Huis Moeder* en *Telefoon-Hotspot* naast elkaar bewaard blijven zonder trage 20-minuten verbindingslussen).
 - **Beveiliging (les C5 uit `BESLUIT-c5-h5.md`):** Het configuratie-AP gaat **niet** ongevraagd openstaan als de router van de bewoner even herstart, maar **uitsluitend** wanneer alle 3 slots leeg zijn (gloednieuw kastje) óf wanneer iemand bewust een fysieke Setup-knopcombinatie indrukt, beveiligd met een uniek WPA2-setupwachtwoord per apparaat.
 
+### Besluit 9 — Derde Target: Kleine Standalone Windows 11 `.exe` (MinGW-w64 / Clang C23, Geen Stack-Bloat)
+- **Keuze:** Ondersteun een native Windows 11 client (`src/platform/win32/` op basis van WASAPI low-latency audio, Winsock2 en een compact Win32 knoppenvenster + System Tray, zie [DESIGN_WINDOWS_CLIENT.md](./DESIGN_WINDOWS_CLIENT.md)).
+- **Compiler & Packaging:** Gebruik **MinGW-w64 GCC** (cross-compile vanuit Linux/WSL in ~2 seconden) of **LLVM/Clang** op Windows in plaats van Microsofts `cl.exe`, zodat volledige C23 en `<stdatomic.h>` ondersteund blijven en `libopus` statisch meegelinkt wordt tot **één losse `uhura.exe` (< 500 KB)** zonder losse DLL's of installers.
+- **Cross-platform Geheugenregel:** Omdat een Windows `.exe` standaard slechts 1 MB stack heeft (en een ESP32-taak 8–16 KB, tegenover 8 MB op Linux), plaatsen alle platform-entrypoints de grote top-level context (`AppRuntime_Owned` / `IntercomCore_Owned`) in statische opslag of een opstart-arena en nooit op een kleine functie-stack.
+
 ---
 
 ## 4. Stapsgewijze Roadmap (Bouw & Test per Fase)
 
 Elke fase heeft een heldere afbakening, een eigen kort detail-ontwerp vooraf, en een concrete praktijktest voordat we naar de volgende fase gaan:
 
-### Fase 1 — Pure C23 Kern & Linux Intercom *(Voltooid ✅)*
-- **Opgeleverd:** Platform-vrije `src/core/` (Opus 48 kHz 10 ms, `'UHUR'` v1 protocol, jitterbuffer met FEC/PLC, PTT `DuplexGate` met oproeptoon), Linux ALSA/UDP app en 5 CTest unit-testsuites. Bouwtijd: ~2 seconden.
-- **Praktijkvalidatie:** Live spraaktest tussen twee Linux-pc's over LAN / WireGuard om latentie, Opus-kwaliteit en PTT-gedrag met echte microfoon en speaker te verifiëren.
+### Fase 1 — Pure C23 Kern, "Roep & 30s Luisteren" & Linux Intercom *(Voltooid ✅)*
+- **Opgeleverd:** Platform-vrije `src/core/` (Opus 48 kHz 10 ms, `'UHUR'` protocol met `ChallengeNonce`, lokale meervoudige mantelzorger-autorisatie `allow_listen = 1, 4` met 1-op-1 retour-exclusiviteit, Far-Field AGC + 150 Hz High-Pass + Nood-Volume Override, jitterbuffer met FEC/PLC, PTT + 30s `DuplexGate`), Linux ALSA/UDP app en 7 CTest unit-testsuites. Bouwtijd: ~2 seconden.
 
-### Fase 2 — Spraak-AGC/Filter in Core + ESP32 Hardware Bring-up (I2S, PSRAM & `MCP23017`)
-- **Doel:** Een fysiek werkend ESP32-intercomkastje dat binnen ~2 seconden opstart en op het lokale netwerk luid en kraakhelder praat met de Linux-intercom.
+### Fase 2a — Native Windows 11 Client (`uhura.exe`) *(Voltooid ✅)*
+- **Opgeleverd:** Losse standalone Windows 11 GUI-executable (`build-win/uhura.exe`, ~800 KB incl. statische `libopus`, `0` externe DLL's, gecross-compiled vanuit Linux/WSL via `pixi run build-win`), met dubbelgebufferd Win32 knoppen- en LED-paneel, low-latency 10 ms audio, `uhura.txt` dubbelklik-configuratie en gebruikershandleiding voor familieleden ([HANDLEIDING_VOOR_ZUS.md](./HANDLEIDING_VOOR_ZUS.md)). Alle 7 `.exe` unit-testsuites draaien en slagen native op Windows 11.
+
+### Fase 2b — ESP32 Hardware Bring-up (I2S, PSRAM & `MCP23017`) *(Eerstvolgende hardware-stap)*
 - **Onderdelen:**
-  1. Integer **High-Pass (150 Hz) + AGC/Limiter** module in `src/core/` inclusief deterministische Linux unit-tests.
-  2. Multi-target build-opzet zodat `src/core/` zonder één regel kopieerwerk zowel in CMake/Pixi (Linux) als in ESP-IDF (`idf.py`) compileert.
-  3. `src/platform/esp32/`:
-     - Statische plaatsing van `IntercomCore_Owned` in de 4 MB gemapte PSRAM en `SpscPcmRing_Owned` + DMA in interne SRAM.
-     - `audio_i2s.c` (ESP-IDF `i2s_std` voor I2S mics + DAC + versterker mute/unmute).
-     - `control_mcp23017.c` (I2C expander driver met interrupt, directe persoons-PTT knoppen en "1 lampje = 1 functie" aansturing).
-     - `net_lwip_udp.c` (non-blocking UDP unicast).
-- **Oplevertest Fase 2:** Stekker in het ESP32-prototype -> binnen 2s brandt het groene lampje bij *Linux PC* -> knop indrukken en luid/helder heen en weer praten.
+  - Multi-target build-opzet zodat `src/core/` zonder kopieerwerk zowel in CMake/Pixi als in ESP-IDF (`idf.py`) compileert.
+  - `src/platform/esp32/`: `IntercomCore_Owned` in de 4 MB gemapte PSRAM, `SpscPcmRing_Owned` + DMA in interne SRAM, `audio_i2s.c`, `control_mcp23017.c` en `net_lwip_udp.c`.
 
 ### Fase 3 — 3-Slots Wi-Fi & Veilig Captive Portal op ESP32
 - **Doel:** Het ESP32-kastje kan zonder hercompileren van jouw werkbank naar het huis van je moeder verhuizen.

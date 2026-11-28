@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(uhura_intercom
     VERSION 0.1.0
-    DESCRIPTION "Embedded-grade C23 Opus UDP Intercom"
+    DESCRIPTION "Embedded-grade C23 Opus UDP Intercom (Linux, ESP32 & Windows 11)"
     LANGUAGES C
 )
 
@@ -10,7 +10,7 @@ set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-option(UHURA_BUILD_LINUX_APP "Build the Linux ALSA/UDP intercom executable" ON)
+option(UHURA_BUILD_APP "Build the platform intercom executable" ON)
 option(UHURA_BUILD_TESTS "Build deterministic core unit tests" ON)
 
 # Strict NASA Power of 10 / Embedded C23 compiler warnings
@@ -32,8 +32,30 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+# ---------------------------------------------------------------------------
+# Opus Codec Dependency:
+# - Native Linux: fast system/Pixi libopus via pkg-config
+# - Windows Cross-Compile: static zero-DLL libopus built from official source
+# ---------------------------------------------------------------------------
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    include(FetchContent)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_FORTIFY_SOURCE OFF CACHE BOOL "" FORCE)
+    set(OPUS_STACK_PROTECTOR OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        opus_static
+        URL https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(opus_static)
+    set(UHURA_OPUS_TARGET Opus::opus)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+    set(UHURA_OPUS_TARGET PkgConfig::OPUS)
+endif()
 
 # ---------------------------------------------------------------------------
 # Pure Platform-Independent Core Library (0 OS / socket / audio-driver headers)
@@ -54,17 +76,22 @@ target_include_directories(uhura_core
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    # Provide <opus.h> include path matching pkg-config opus layout
+    target_include_directories(uhura_core SYSTEM PUBLIC ${opus_static_SOURCE_DIR}/include)
+endif()
+
 target_link_libraries(uhura_core
     PUBLIC
-        PkgConfig::OPUS
+        ${UHURA_OPUS_TARGET}
     PRIVATE
         uhura_strict_warnings
 )
 
 # ---------------------------------------------------------------------------
-# Thin Linux Platform Adapter & Intercom Executable
+# Platform 1: Thin Linux Adapter & CLI Executable (ALSA + POSIX UDP)
 # ---------------------------------------------------------------------------
-if(UHURA_BUILD_LINUX_APP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(UHURA_BUILD_APP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
     find_package(Threads REQUIRED)
 
@@ -92,7 +119,44 @@ if(UHURA_BUILD_LINUX_APP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # ---------------------------------------------------------------------------
-# Deterministic Core Unit Tests (no network card or sound card required)
+# Platform 2: Thin Windows 11 Native Standalone GUI Executable (uhura.exe)
+# Zero external DLLs (-static), 4 MB stack headroom, Win32 + WinMM + Winsock2
+# ---------------------------------------------------------------------------
+if(UHURA_BUILD_APP AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_executable(uhura WIN32
+        src/platform/win32/net_winsock.c
+        src/platform/win32/audio_winmm.c
+        src/platform/win32/main_win32.c
+    )
+
+    target_compile_definitions(uhura PRIVATE
+        WIN32_LEAN_AND_MEAN
+        _WIN32_WINNT=0x0A00
+    )
+
+    target_include_directories(uhura
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_options(uhura PRIVATE
+        -static
+        -Wl,--stack,4194304
+    )
+
+    target_link_libraries(uhura
+        PRIVATE
+            uhura_core
+            ws2_32
+            winmm
+            gdi32
+            user32
+            uhura_strict_warnings
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# Deterministic Core Unit Tests (compile & run on both Linux and Windows!)
 # ---------------------------------------------------------------------------
 if(UHURA_BUILD_TESTS)
     enable_testing()
@@ -104,6 +168,9 @@ if(UHURA_BUILD_TESTS)
                 uhura_core
                 uhura_strict_warnings
         )
+        if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+            target_link_options(${test_name} PRIVATE -static -Wl,--stack,4194304)
+        endif()
         add_test(NAME ${test_name} COMMAND ${test_name})
     endfunction()
 

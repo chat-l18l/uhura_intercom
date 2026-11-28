@@ -46,7 +46,7 @@ Het vak van de ICT'er verschuift fundamenteel: **het intypen van regels code is 
 
 | Eigenschap | Invulling |
 |---|---|
-| **Doelhardware** | **ESP32 / ESP32-S3** (8 MB PSRAM, I2S microfoons + Audio DAC, `MCP23017` I2C knoppen/LEDs) én **Linux** (`x86_64` PC/server, `aarch64` Raspberry Pi & NVIDIA Jetson) |
+| **Doelhardware (3 Targets)** | **1. ESP32 / ESP32-S3** (8 MB PSRAM, I2S mics + DAC, `MCP23017` knoppen/LEDs)<br>**2. Linux Native** (`x86_64` PC/server, `aarch64` Raspberry Pi & NVIDIA Jetson)<br>**3. Windows 11 Native** (standalone `< 500 KB` `uhura.exe` op WASAPI + Winsock2 + Win32 GUI/Tray, zie [docs/DESIGN_WINDOWS_CLIENT.md](./docs/DESIGN_WINDOWS_CLIENT.md)) |
 | **Audioprofiel** | **Opus** (`48 kHz` mono, `10 ms` frames = `480` samples/pakket), inclusief in-band **FEC** en **Packet Loss Concealment (PLC)** |
 | **Geheugenmodel** | **0 dynamische allocaties (`malloc`/`free`)** — zelfs `libopus` draait op statisch uitgelijnde buffers (~290 KB totaal) |
 | **Codeerstandaard** | Strikte **C23** (`-Wall -Wextra -Werror -Wpedantic -Wconversion -Wvla`), expliciet `_Owned` / `_Loaned` eigenaarschap, Strong Types, Parameter Object Pattern en **0 globale variabelen** |
@@ -58,14 +58,14 @@ Het vak van de ICT'er verschuift fundamenteel: **het intypen van regels code is 
 Dit project gebruikt [Pixi](https://pixi.sh) zodat de volledige C23-toolchain (`cmake`, `ninja`, `c-compiler`, `libopus`, `alsa-lib`) op zowel `linux-64` (`x86_64`) als `linux-aarch64` (Raspberry Pi / Jetson) met één commando identiek werkt:
 
 ```bash
-# Configureer, compileer (onder strikte -Werror vlaggen) en draai alle 5 unit-testsuites:
+# Configureer, compileer (onder strikte -Werror vlaggen) en draai alle 7 Linux unit-tests:
 pixi run test
 
-# Alleen de release/debug-met-symbolen binary bouwen:
-pixi run build
+# Cross-compileer vanuit Linux/WSL een losse standalone Windows 11 executable (./build-win/uhura.exe):
+pixi run build-win
 ```
 
-De gecompileerde Linux-intercom staat daarna in `./build/uhura`.
+De Linux-binary staat daarna in `./build/uhura`, en de statische Windows 11 GUI-executable (zonder losse `.dll`'s!) in `./build-win/uhura.exe` (zie [docs/HANDLEIDING_VOOR_ZUS.md](./docs/HANDLEIDING_VOOR_ZUS.md) en [uhura.txt.example](./uhura.txt.example) voor direct gebruik op Windows).
 
 ---
 
@@ -107,11 +107,13 @@ Elke post krijgt een `--id` (`1..16`), een leesbare `--name`, en één of meer `
 Met dit scenario test je direct het volledige val-check scenario (noodvolume-override, replay-veilige `ChallengeNonce`, 30s gevoelig terugluisteren op afstand en weigering van onbevoegden):
 
 **1. Op PC A ("Huis Moeder", bijv. IP `192.168.1.50`):**
-Zet het volume bewust laag (`--volume 10` avondstand) en geef **uitsluitend** post `#1` (`Edwin`) luistertoestemming met `--allow-listen 1` (post `#4` `Buurman` krijgt die vlag *niet*):
+Zet het volume bewust laag (`--volume 10` avondstand) en geef **uitsluitend** post `#1` (`Edwin`) en `#4` (`Zus`) luistertoestemming met `--allow-listen 1,4` (post `#5` `Buurman` krijgt die vlag *niet*):
 ```bash
 ./build/uhura --id 2 --name Ma-Woonkamer --port 4711 --volume 10 \
-  --peer 1:Edwin:192.168.1.10:4711 --allow-listen 1 \
-  --peer 4:Buurman:192.168.1.99:4711
+  --peer 1:Edwin:192.168.1.10:4711 \
+  --peer 4:Zus:192.168.1.40:4711 \
+  --peer 5:Buurman:192.168.1.99:4711 \
+  --allow-listen 1,4
 ```
 
 **2. Op PC B ("Huis Edwin", bijv. IP `192.168.1.10`):**
@@ -148,20 +150,27 @@ Zet het volume bewust laag (`--volume 10` avondstand) en geef **uitsluitend** po
 ```text
 .
 ├── AGENTS.md                        # Strikte embedded C-regels & Design-First werkwijze
+├── cmake/
+│   └── mingw-w64-x86_64.cmake       # Toolchain voor statische Windows 11 cross-compile
 ├── docs/
 │   ├── DESIGN.md                    # Systeem-, 'UHUR'-protocol- & type-ontwerp (Fase 1)
 │   ├── DESIGN_CARE_LISTEN.md        # Ontwerp & beveiliging 30s "Roep & Luister" welzijnscheck
+│   ├── DESIGN_WINDOWS_CLIENT.md     # Architectuur standalone Windows 11 client (uhura.exe)
+│   ├── HANDLEIDING_VOOR_ZUS.md      # Korte niet-technische gebruikersgids voor Windows
 │   ├── REQUIREMENTS_AND_ROADMAP.md  # Architectuurbesluiten, Kringen, Eduroam & ESP32-plan
 │   └── PROJECT_LOG_BLOG_NOTES.md    # Verhaallijnen & ontwerpafwegingen (hexnut.net / Elektor)
-├── pixi.toml                        # Multi-arch dependencies (linux-64 & linux-aarch64)
-├── CMakeLists.txt                   # Strikte C23 build & CTest configuratie
+├── pixi.toml                        # Multi-arch + MinGW-w64 cross-compile dependencies
+├── CMakeLists.txt                   # Strikte C23 build & CTest configuratie (Linux & Windows)
+├── uhura.txt.example                # Voorbeeld dubbelklik-configuratie naast uhura.exe
 ├── include/
 │   ├── core/                        # 100% OS-vrije headers, Strong Types, _Owned & _Loaned
-│   └── platform/                    # Smalle platform HAL-interface
+│   └── platform/                    # Smalle Linux & Win32 HAL-interfaces
 ├── src/
-│   ├── core/                        # Pure protocol-, Opus-, jitterbuffer-, PTT- & mixer-logica
-│   └── platform/linux/              # Linux UDP unicast, ALSA real-time thread & terminal-UI
-└── tests/                           # Deterministische unit-tests (incl. 3-posten simulatie)
+│   ├── core/                        # Pure protocol-, DSP-, Opus-, jitterbuffer- & mixer-logica
+│   └── platform/
+│       ├── linux/                   # Linux UDP unicast, ALSA real-time thread & terminal-UI
+│       └── win32/                   # Windows 11 Winsock2, 10ms audio & Win32 GUI-kastje
+└── tests/                           # 7 deterministische unit-testsuites (Linux én Windows)
 ```
 
 ---
@@ -170,8 +179,9 @@ Zet het volume bewust laag (`--volume 10` avondstand) en geef **uitsluitend** po
 
 Zie [docs/REQUIREMENTS_AND_ROADMAP.md](./docs/REQUIREMENTS_AND_ROADMAP.md) voor de volledige onderbouwing per fase:
 
-- [x] **Fase 1 — Pure C23 Kern & Linux Intercom:** Zero-`malloc` Opus 48 kHz / 10 ms, `'UHUR'` v1 protocol, jitterbuffer met FEC/PLC, PTT `DuplexGate` met oproeptoon, Linux ALSA/UDP app en unit-tests.
-- [ ] **Fase 2 — Spraak-AGC & ESP32 Hardware Bring-up:** Spraakverstaanbaarheidsfilter/AGC in `core/` + `platform/esp32/` (8 MB PSRAM, I2S mic/DAC, `MCP23017` knoppen & LEDs).
+- [x] **Fase 1 — Pure C23 Kern, "Roep & 30s Luisteren" & Linux Intercom:** Zero-`malloc` Opus 48 kHz / 10 ms, `'UHUR'` protocol met `ChallengeNonce`, meervoudige mantelzorger-toestemming (`allow_listen = 1, 4`), Far-Field AGC + noodvolume-override, Linux ALSA/UDP app en 7 unit-testsuites.
+- [x] **Fase 2a — Native Windows 11 Client (`uhura.exe`):** Losse standalone Windows GUI-executable (~800 KB incl. `libopus`, `0` externe DLL's) met vasthoud-knoppen, LED-status, `uhura.txt` configuratie en familie-handleiding ([docs/DESIGN_WINDOWS_CLIENT.md](./docs/DESIGN_WINDOWS_CLIENT.md)).
+- [ ] **Fase 2b — ESP32 Hardware Bring-up:** `platform/esp32/` (8 MB PSRAM, I2S mic/DAC, `MCP23017` knoppen & LEDs).
 - [ ] **Fase 3 — 3-Slots Wi-Fi & Veilig Captive Portal (ESP32):** Eenvoudig eenmalig Wi-Fi instellen via telefoon en automatisch kiezen uit 3 onthouden netwerken.
 - [ ] **Fase 4 — `'UHUR'` v2 Crypto, `NodeId` & Roaming:** Eind-tot-eind encryptie (`X25519` + `ChaCha20-Poly1305`), losse knoppentoewijzing en naadloze IP-wissels.
 - [ ] **Fase 5 — Switchboard, "Kringen" & Eduroam-Fallback:** Webbeheer voor Kringen, automatische UDP Hole Punching én poort-443 TCP/TLS fallback voor restrictieve netwerken.

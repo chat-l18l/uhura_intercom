@@ -341,20 +341,36 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Pass 3: apply explicit local --allow-listen permissions */
+    /* Pass 3: apply explicit local --allow-listen permissions (supports "1" or "1,4") */
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "--allow-listen") == 0) && ((i + 1) < argc)) {
-            uint16_t perm_id = 0U;
-            if (!parse_u16_strict(argv[++i], &perm_id) ||
-                (IntercomCore_set_peer_listen_permission(&app.core, (PeerPermissionParams){
-                    .station    = { .id = (uint8_t)perm_id },
-                    .permission = LISTEN_PERM_ALLOWED
-                }) != CORE_OK)) {
-                (void)fprintf(
-                    stderr,
-                    "Fout: --allow-listen %u verwijst niet naar een geregistreerde peer.\n",
-                    (unsigned int)perm_id
-                );
+            const char *p = argv[++i];
+            bool any_parsed = false;
+            for (size_t guard = 0U; (guard < (size_t)UHURA_MAX_PEERS) && (*p != '\0'); ++guard) {
+                while ((*p == ' ') || (*p == ',') || (*p == ';')) {
+                    ++p;
+                }
+                if (*p == '\0') {
+                    break;
+                }
+                char *endp = NULL;
+                const unsigned long perm_ul = strtoul(p, &endp, 10);
+                if ((endp == p) || (perm_ul < 1UL) || (perm_ul > (unsigned long)UHURA_MAX_PEERS)) {
+                    any_parsed = false;
+                    break;
+                }
+                if (IntercomCore_set_peer_listen_permission(&app.core, (PeerPermissionParams){
+                        .station    = { .id = (uint8_t)perm_ul },
+                        .permission = LISTEN_PERM_ALLOWED
+                    }) != CORE_OK) {
+                    any_parsed = false;
+                    break;
+                }
+                any_parsed = true;
+                p = endp;
+            }
+            if (!any_parsed) {
+                (void)fprintf(stderr, "Fout: ongeldige --allow-listen waarde.\n");
                 UdpTransport_close(&app.udp);
                 return 1;
             }

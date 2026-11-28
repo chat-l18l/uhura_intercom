@@ -1,6 +1,6 @@
 # Functie-Ontwerp & Systeemimpact: "Roep & Luister" (Welzijnsoproep met 30s Antwoordvenster)
 
-**Status:** Ontwerp & Impactanalyse (nog geen code geschreven)  
+**Status:** Geïmplementeerd & Getest op Linux én Windows 11 (`tests/test_care_listen.c`)  
 **Aanleiding:** Veiligheid thuis bij valgevaar (wanneer telefoon in een andere kamer ligt en smartwatch/alarmketting op de lader ligt of in de badkamer niet wordt gedragen).
 
 ---
@@ -22,9 +22,10 @@ De **Welzijnsoproep ("Roep & Luister")** draait de rollen om:
 
 Omdat een microfoon op afstand kunnen openen extreem gevoelig ligt, gelden vier ononderhandelbare regels:
 
-1. **Strikte Per-Persoon Toestemming (Lokaal op Moeders Kastje!):**
+1. **Strikte Per-Persoon Toestemming voor Meerdere Naasten (Lokaal op Moeders Kastje!):**
    - Moeder kan met allerlei mensen in Kringen praten (buren, kennissen, andere familie). Voor **al die mensen** staat `PeerListenPermission` keihard op `LISTEN_PERM_DENIED` (de standaardwaarde). Hun oproepen kunnen haar microfoon **nooit** automatisch openen.
-   - Alleen specifiek door Moeder op haar eigen kastje aangewezen vertrouwenspersonen (in dit geval uitsluitend de cryptografische `NodeId` van **Edwin** en **Zusje**) krijgen lokaal in haar NVS-geheugen `LISTEN_PERM_ALLOWED`.
+   - Specifiek door Moeder op haar eigen kastje aangewezen vertrouwenspersonen — bijvoorbeeld **zowel zoon (`#1 Edwin`) als dochter (`#4 Zusje`)** via `allow_listen = 1, 4` of `--allow-listen 1,4` — krijgen beiden lokaal `LISTEN_PERM_ALLOWED`.
+   - **Strikte 1-op-1 exclusiviteit per oproep:** Ook wanneer meerdere kinderen op de toestemmingslijst staan, stuurt Moeders kastje de 30 seconden audio **uitsluitend** terug naar die éne gemachtigde persoon die op dát moment de Welzijnsoproep deed en de `ChallengeNonce` bevestigde (nooit tegelijk ongevraagd naar de andere gemachtigden of andere kringleden).
    - **Belangrijk:** De centrale Switchboard-server beslist hier **niet** over. Zelfs een gecompromitteerde server kan zichzelf of een derde nooit luisterrechten geven op Moeders kastje.
 2. **Cryptografische Live-Bevestiging (Geen Replay-Aanvallen):**
    - Om te voorkomen dat een vastgelegd netwerkpakket uit het verleden opnieuw kan worden afgespeeld om de microfoon te openen, vereist het openen van het 30s-venster een **verse 64-bit `ChallengeNonce`** vanuit Moeders kastje die live door Edwins privésleutel bevestigd moet worden (1 netwerk-roundtrip van ~15 ms).

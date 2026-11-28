@@ -287,5 +287,59 @@ int main(void) {
     TEST_CHECK(DuplexGate_state(&ma_beneden.duplex_gate) == DUPLEX_STATE_LISTENING);
     TEST_CHECK(!DuplexGate_is_mic_hot(&ma_beneden.duplex_gate));
 
+    /* =====================================================================
+     * TEST 4: Multiple Authorized Family Members (e.g. Edwin #1 AND Zus #5)!
+     * Both siblings independently hold LISTEN_PERM_ALLOWED on Mother's box
+     * and Zus (#5) can also open a 30s Care-Listen window while Buurman (#4)
+     * remains denied.
+     * ===================================================================== */
+    IntercomCore_Owned zus;
+    IntercomConfigParams c5 = base;
+    c5.local_station.id = 5U;
+    TEST_CHECK(IntercomCore_init(&zus, c5) == CORE_OK);
+    TEST_CHECK(IntercomCore_register_peer(&zus, (PeerRegisterParams){
+        .station = { .id = 2U }, .name = "Ma-Woonkamer"
+    }) == CORE_OK);
+    TEST_CHECK(IntercomCore_register_peer(&ma_beneden, (PeerRegisterParams){
+        .station = { .id = 5U }, .name = "Zus"
+    }) == CORE_OK);
+    TEST_CHECK(IntercomCore_set_peer_listen_permission(&ma_beneden, (PeerPermissionParams){
+        .station = { .id = 5U }, .permission = LISTEN_PERM_ALLOWED
+    }) == CORE_OK);
+
+    /* Both Edwin (#1) and Zus (#5) are now simultaneously authorized! */
+    TEST_CHECK(ma_beneden.peers[0].listen_perm == LISTEN_PERM_ALLOWED);
+    TEST_CHECK(ma_beneden.peers[4].listen_perm == LISTEN_PERM_ALLOWED);
+    TEST_CHECK(ma_beneden.peers[3].listen_perm == LISTEN_PERM_DENIED); /* Buurman #4 still denied */
+
+    IntercomCore_set_targets(&zus, TargetPeerMask_from_station((StationId){ .id = 2U }));
+    IntercomCore_set_ptt_command(&zus, (PttCommandParams){
+        .button = PTT_PRESSED, .call_kind = CALL_KIND_CARE_LISTEN
+    });
+    IntercomCore_set_ptt_command(&zus, (PttCommandParams){
+        .button = PTT_RELEASED, .call_kind = CALL_KIND_CARE_LISTEN
+    });
+
+    /* Route Zus <-> Ma-Beneden Challenge/Confirm */
+    sim_us += 20000ULL;
+    for (size_t pass = 0U; pass < 3U; ++pass) {
+        TxEnvelope_Owned env = {0};
+        while (IntercomCore_pop_tx_move(&zus, &env) == CORE_OK) {
+            IntercomCore_on_rx_datagram(&ma_beneden, (IntercomRxDatagramParams){
+                .raw_datagram = WireDatagram_loan(&env.datagram),
+                .now          = { .us = sim_us }
+            });
+        }
+        while (IntercomCore_pop_tx_move(&ma_beneden, &env) == CORE_OK) {
+            IntercomCore_on_rx_datagram(&zus, (IntercomRxDatagramParams){
+                .raw_datagram = WireDatagram_loan(&env.datagram),
+                .now          = { .us = sim_us }
+            });
+        }
+    }
+
+    TEST_CHECK(DuplexGate_state(&ma_beneden.duplex_gate) == DUPLEX_STATE_AUTO_REPLY_TX);
+    TEST_CHECK(ma_beneden.authorized_listener.id == 5U); /* Streaming exclusively to Zus! */
+
     return 0;
 }

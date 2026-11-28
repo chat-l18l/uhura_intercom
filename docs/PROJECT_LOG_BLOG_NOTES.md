@@ -78,4 +78,25 @@ Niet door "vibe coding" (*"bouw een intercom voor me"*), maar door **strenger te
 
 1. **Regels vóór Code (`AGENTS.md`):** Voor er één `.c`-bestand bestond, zijn 7 keiharde embedded-regels vastgelegd (*NASA Power of 10* + *Zenoh-pico* eigenaarschap): nul `malloc`/`free` (zelfs `libopus` draait op statische buffers), strikt onderscheid tussen `_Owned` en `_Loaned` geheugen, geen *naked* primitieve types (`int`, `uint8_t*`) maar Strong Types (`StationId`, `ChallengeNonce`, `VolumePercent`), nul globale variabelen, en 100% scheiding tussen pure logica (`src/core/`) en hardware (`src/platform/`).
 2. **Eerst Ontwerp & Kritisch Doorvragen (`docs/DESIGN*.md`):** Elke nieuwe functie (zoals het 30s luistervenster of de ESP32 PSRAM-verdeling waarbij I2S-DMA in interne SRAM móét blijven om haperen tijdens flash-writes te voorkomen) wordt eerst als ontwerpdocument uitgewerkt, besproken en goedgekeurd.
-3. **Bewijs door Deterministische Simulatie (`pixi run test` in 0,03 seconde):** Omdat `src/core/` geen enkele socket of geluidskaart aanraakt, bootst `tests/test_care_listen.c` vier volledige kastjes na (*Edwin*, *Ma-Beneden op 0% nachtstand*, *Ma-Boven met zacht geklop*, en een *ongeautoriseerde Buurman*), inclusief een onderschept netwerkpakket dat opnieuw wordt afgespeeld (*Replay Attack*). Elke wijziging compileert in minder dan 2 seconden onder `-Wall -Wextra -Werror -Wconversion` en bewijst wiskundig dat alle veiligheidsregels houden.
+3. **Bewijs door Deterministische Simulatie (`pixi run test` in 0,03 seconde):** Omdat `src/core/` geen enkele socket of geluidskaart aanraakt, bootst `tests/test_care_listen.c` volledige huishoudens na (*Edwin*, *Zus*, *Ma-Beneden op 0% nachtstand*, *Ma-Boven met zacht geklop*, en een *ongeautoriseerde Buurman*), inclusief een onderschept netwerkpakket dat opnieuw wordt afgespeeld (*Replay Attack*). Elke wijziging compileert in minder dan 2 seconden onder `-Wall -Wextra -Werror -Wconversion` en bewijst wiskundig dat alle veiligheidsregels houden.
+
+---
+
+## Aflevering / Thema 5: Een Native Windows 11 Intercom van 800 KB — Zónder Electron, .NET of DLL-Hell
+
+### Waarom een Windows `.exe` naast Linux en ESP32?
+Bij Moeder in de woonkamer en op de overloop komt straks het fysieke **ESP32-kastje** met echte drukknoppen en LEDs. Maar waar zitten haar zoon en haar dochter overdag tijdens het werk of thuis? Vaak gewoon achter een **Windows 11 pc of laptop**.
+
+Als zij vanaf hun bureau direct bereikbaar willen zijn (of even een Welzijnsoproep willen doen), wil je je zus niet vragen om Linux, Python, Java of een 250 MB zware Electron/WebView-applicatie te installeren. Je wilt een mapje met **één enkel klein bestandje `uhura.exe`** + een tekstbestandje `uhura.txt` kunnen opsturen: uitpakken, dubbelklikken en binnen `0,05 seconde` staat het "virtuele intercomkastje" klaar op haar scherm.
+
+### Het bewijs van een schone Hardware-Abstractielaag (HAL)
+Hier betaalde onze strikte scheiding uit Aflevering 4 zich op spectaculaire wijze terug:
+- Aan de volledige `src/core/` (Opus-codec, `'UHUR'`-protocol, `ChallengeNonce` beveiliging, Far-Field AGC, jitterbuffers en mixer) hoefde **letterlijk nul regels code** te worden aangepast voor Windows.
+- Door in `pixi.toml` de MinGW-w64 UCRT C23 cross-compiler (`gcc_win-64`) op te nemen, rolt er vanuit dezelfde Linux/WSL-omgeving met één commando (`pixi run build-win`) een volledig statisch gelinkte `uhura.exe` (~800 KB inclusief `libopus` met SSE/AVX2 optimalisaties!) uit.
+- **Nul externe `.dll`-bestanden:** een inspectie met `objdump` laat zien dat `uhura.exe` uitsluitend standaard Windows systeem-DLL's gebruikt (`USER32`, `GDI32`, `WINMM`, `WS2_32` en `UCRT`), die op elke Windows 10/11 pc al in `C:\Windows\System32` staan.
+- Zelfs alle 7 unit-testsuites compileerden in één keer naar `.exe` en slaagden direct native op Windows 11.
+
+### Drie praktische details die het voor familie afmaken
+1. **Echte vasthoud-knoppen met de muis:** In een terminal is "ingedrukt houden" lastig, maar in een puur Win32 GDI-venster (`WM_LBUTTONDOWN` + `WM_LBUTTONUP`) werkt de muis exact zoals de fysieke drukknop op het ESP32-kastje: muisknop ingedrukt houden = spreken (rode balk licht op), loslaten = luisteren.
+2. **Dubbelklik-configuratie (`uhura.txt`):** Geen gedoe met snelkoppelingen of command-line parameters voor familieleden; `uhura.exe` zoekt naast zichzelf naar `uhura.txt` voor naam, poort en bekende posten.
+3. **Meerdere gemachtigde mantelzorgers (`allow_listen = 1, 4`) met 1-op-1 privacy:** Op het kastje van Moeder kunnen zowel *broer* (`#1`) als *zus* (`#4`) op de toestemmingslijst staan om in geval van zorg het 30-seconden luistervenster te activeren (terwijl een buurman of kennis dat recht niet heeft). Daarbij bewaakt de kern een subtiele maar belangrijke privacyregel: zodra *zus* een Welzijnsoproep doet, stuurt Moeders kastje die 30 seconden audio **uitsluitend naar zus** — en nooit tegelijk ongevraagd naar broer of anderen.

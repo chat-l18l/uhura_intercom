@@ -1,7 +1,7 @@
 [workspace]
 name = "uhura-intercom"
 version = "0.1.0"
-description = "Low-latency C23 Opus PTT intercom over UDP unicast & WireGuard (NASA Power of 10 / Zenoh-pico style)"
+description = "Low-latency C23 Opus PTT intercom over UDP unicast & WireGuard (Linux, ESP32 & Windows 11)"
 channels = ["conda-forge"]
 platforms = ["linux-64", "linux-aarch64"]
 
@@ -11,7 +11,11 @@ configure-debug = "cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAK
 build = { cmd = "cmake --build build", depends-on = ["configure"] }
 build-debug = { cmd = "cmake --build build-debug", depends-on = ["configure-debug"] }
 test = { cmd = "ctest --test-dir build --output-on-failure", depends-on = ["build"] }
-clean = "rm -rf build build-debug"
+
+configure-win = "cmake -B build-win -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake -DCMAKE_BUILD_TYPE=Release"
+build-win = { cmd = "cmake --build build-win", depends-on = ["configure-win"] }
+
+clean = "rm -rf build build-debug build-win"
 
 [dependencies]
 cmake = ">=3.28,<5"
@@ -20,3 +24,6 @@ c-compiler = ">=1.7"
 pkg-config = ">=0.29"
 libopus = ">=1.4,<2"
 alsa-lib = ">=1.2.10,<2"
+
+[target.linux-64.dependencies]
+gcc_win-64 = ">=14"
